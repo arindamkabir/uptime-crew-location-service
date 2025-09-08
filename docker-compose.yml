@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  location-service:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+      - JWT_SECRET=${JWT_SECRET}
+      - GEOFENCING_ENABLED=true
+      - GEOFENCING_CHECK_INTERVAL=5000
+      - SOCKET_CORS_ORIGIN=${SOCKET_CORS_ORIGIN:-http://localhost:3000}
+      - LOG_LEVEL=info
+      - RATE_LIMIT_WINDOW_MS=900000
+      - RATE_LIMIT_MAX_REQUESTS=100
+      - RATE_LIMIT_BLOCK_DURATION=3600000
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3001/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  default:
+    name: location-network
