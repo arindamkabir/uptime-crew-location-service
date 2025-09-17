@@ -7,9 +7,16 @@ Real-time location sharing and geofencing microservice using Node.js, Socket.IO,
 ### Using Deployment Script (Recommended)
 
 ```bash
-# Deploy the service
+# Deploy the service (includes Docker installation if needed)
 ./deploy.sh
 ```
+
+**Features:**
+
+- ✅ **Auto-installs Docker** on Ubuntu/Debian systems
+- ✅ **Creates default environment file** if missing
+- ✅ **Complete deployment process** in one command
+- ✅ **Health checks and validation**
 
 ### Using Docker Compose (Manual)
 

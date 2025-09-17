@@ -34,10 +34,43 @@ print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
-# Check if Docker is installed
+# Check if Docker is installed, install if not available
 if ! command -v docker &> /dev/null; then
-    print_error "Docker is not installed. Please install Docker first."
-    exit 1
+    print_warning "Docker is not installed. Attempting to install Docker..."
+    
+    # Check if running on Ubuntu/Debian and sudo is available
+    if command -v apt &> /dev/null && command -v sudo &> /dev/null; then
+        print_status "Installing Docker on Ubuntu/Debian..."
+        
+        # Update package index
+        sudo apt update
+        
+        # Install required packages
+        sudo apt install -y apt-transport-https ca-certificates curl gnupg lsb-release
+        
+        # Add Docker's official GPG key
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        
+        # Add Docker repository
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        
+        # Update package index again
+        sudo apt update
+        
+        # Install Docker
+        sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+        
+        # Add current user to docker group
+        sudo usermod -aG docker $USER
+        
+        print_status "Docker installed successfully!"
+        print_warning "Please log out and log back in for group changes to take effect, then run this script again."
+        exit 0
+    else
+        print_error "Docker is not installed and automatic installation is not supported on this system."
+        print_error "Please install Docker manually: https://docs.docker.com/get-docker/"
+        exit 1
+    fi
 fi
 
 # Check if Docker Compose is available (try both commands)
@@ -53,10 +86,48 @@ fi
 
 print_status "Docker and Docker Compose are available"
 
-# Check if env.production exists
+# Check if env.production exists, create if missing
 if [ ! -f "env.production" ]; then
-    print_error "env.production file not found. Please create it first."
-    exit 1
+    print_warning "env.production file not found. Creating default environment file..."
+    
+    cat > env.production << 'EOF'
+# Server Configuration
+NODE_ENV=production
+PORT=3001
+HOST=0.0.0.0
+
+# Laravel Backend Configuration
+LARAVEL_API_URL=https://api.uptimecrew.lol
+LARAVEL_API_KEY=base64:p87HVRvaXZmL4hmcuzRgtt02TPoGFCvsshxTMfqQrTU=
+
+# Google Maps Configuration
+GOOGLE_MAPS_API_KEY=AIzaSyCifZHBz3ewOlgvJ_H5Et1vI0RxMFWPWe4
+
+# Geofencing Configuration
+GEOFENCING_ENABLED=true
+GEOFENCING_CHECK_INTERVAL=5000
+DEFAULT_GEOFENCE_RADIUS=1000
+
+# Socket Configuration
+SOCKET_CORS_ORIGIN=http://localhost:3000
+SOCKET_PING_TIMEOUT=60000
+SOCKET_PING_INTERVAL=25000
+
+# Logging
+LOG_LEVEL=info
+LOG_FILE=logs/app.log
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+
+# Security
+JWT_SECRET=your_jwt_secret_here
+API_KEY_HEADER=X-API-Key
+EOF
+    
+    print_status "Default environment file created"
+    print_warning "Please update env.production with your actual configuration values"
 fi
 
 print_status "Environment file found"
