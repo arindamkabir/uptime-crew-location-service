@@ -60,11 +60,22 @@ if ! command -v docker &> /dev/null; then
         # Install Docker
         sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
         
+        # Install Nginx
+        sudo apt install -y nginx
+        
         # Add current user to docker group
         sudo usermod -aG docker $USER
         
-        print_status "Docker installed successfully!"
+        print_status "Docker and Nginx installed successfully!"
         print_warning "Please log out and log back in for group changes to take effect, then run this script again."
+        exit 0
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        print_status "Detected macOS system"
+        print_warning "Please install Docker Desktop for Mac:"
+        print_info "1. Download from: https://www.docker.com/products/docker-desktop/"
+        print_info "2. Install Docker Desktop"
+        print_info "3. Install Nginx: brew install nginx"
+        print_info "4. Run this script again"
         exit 0
     else
         print_error "Docker is not installed and automatic installation is not supported on this system."
@@ -85,6 +96,39 @@ else
 fi
 
 print_status "Docker and Docker Compose are available"
+
+# Check if Nginx is installed, install if not available
+if ! command -v nginx &> /dev/null; then
+    print_warning "Nginx is not installed. Attempting to install Nginx..."
+    
+    # Check if running on Ubuntu/Debian and sudo is available
+    if command -v apt &> /dev/null && command -v sudo &> /dev/null; then
+        print_status "Installing Nginx on Ubuntu/Debian..."
+        sudo apt update
+        sudo apt install -y nginx
+        print_status "Nginx installed successfully!"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        print_status "Detected macOS system"
+        if command -v brew &> /dev/null; then
+            print_status "Installing Nginx via Homebrew..."
+            brew install nginx
+            print_status "Nginx installed successfully!"
+        else
+            print_error "Homebrew is not installed. Please install Homebrew first:"
+            print_info "1. Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            print_info "2. Install Nginx: brew install nginx"
+            print_info "3. Run this script again"
+            exit 1
+        fi
+    else
+        print_error "Nginx is not installed and automatic installation is not supported on this system."
+        print_error "Please install Nginx manually:"
+        print_info "Ubuntu/Debian: sudo apt install nginx"
+        print_info "macOS: brew install nginx"
+        print_info "CentOS/RHEL: sudo yum install nginx"
+        exit 1
+    fi
+fi
 
 # Check if env.production exists, create if missing
 if [ ! -f "env.production" ]; then
@@ -206,6 +250,85 @@ while [ $attempt -le $max_attempts ]; do
     fi
 done
 
+# Configure Nginx
+print_status "Configuring Nginx..."
+
+# Check if Nginx is installed
+if command -v nginx &> /dev/null; then
+    # Copy Nginx configuration
+    if [ -f "nginx.conf" ]; then
+        # Determine Nginx configuration directory based on OS
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS with Homebrew
+            NGINX_CONF_DIR="/usr/local/etc/nginx"
+            NGINX_SITES_DIR="$NGINX_CONF_DIR/servers"
+            sudo mkdir -p "$NGINX_SITES_DIR"
+            sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service.conf"
+            
+            # Copy locations file if it exists
+            if [ -f "nginx-locations.conf" ]; then
+                sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
+                print_status "Nginx locations configuration copied"
+            fi
+            
+            # Update main nginx.conf to include servers directory
+            if ! grep -q "include servers/\*.conf;" "$NGINX_CONF_DIR/nginx.conf"; then
+                sudo sed -i '' '/http {/a\
+    include servers/*.conf;
+' "$NGINX_CONF_DIR/nginx.conf"
+                print_status "Updated main nginx.conf to include servers directory"
+            fi
+        else
+            # Linux (Ubuntu/Debian)
+            NGINX_CONF_DIR="/etc/nginx"
+            NGINX_SITES_DIR="$NGINX_CONF_DIR/sites-available"
+            sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service"
+            
+            # Copy locations file if it exists
+            if [ -f "nginx-locations.conf" ]; then
+                sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
+                print_status "Nginx locations configuration copied"
+            fi
+            
+            # Create symlink to enable the site
+            if [ ! -L "/etc/nginx/sites-enabled/uptime-location-service" ]; then
+                sudo ln -s "$NGINX_SITES_DIR/uptime-location-service" /etc/nginx/sites-enabled/
+                print_status "Nginx site configuration enabled"
+            fi
+            
+            # Remove default site if it exists
+            if [ -L "/etc/nginx/sites-enabled/default" ]; then
+                sudo rm /etc/nginx/sites-enabled/default
+                print_status "Default Nginx site removed"
+            fi
+        fi
+        
+        # Test Nginx configuration
+        if sudo nginx -t; then
+            print_status "Nginx configuration is valid"
+            
+            # Restart Nginx
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS
+                sudo brew services restart nginx 2>/dev/null || sudo nginx -s reload
+                print_status "Nginx restarted"
+            else
+                # Linux
+                sudo systemctl restart nginx
+                sudo systemctl enable nginx
+                print_status "Nginx restarted and enabled"
+            fi
+        else
+            print_error "Nginx configuration is invalid"
+            print_error "Please check the configuration: sudo nginx -t"
+        fi
+    else
+        print_warning "nginx.conf not found, skipping Nginx configuration"
+    fi
+else
+    print_warning "Nginx is not installed, skipping Nginx configuration"
+fi
+
 # Show container status
 echo -e "\n${BLUE}Container Status:${NC}"
 docker ps --filter name=$CONTAINER_NAME
@@ -217,9 +340,25 @@ docker logs --tail 10 $CONTAINER_NAME
 print_status "Deployment completed successfully!"
 echo -e "${GREEN}"
 echo "🎉 Uptime Location Service is now running!"
-echo "📍 Service URL: http://localhost:$PORT"
+echo ""
+echo "📍 Direct Service URL: http://localhost:$PORT"
+echo "🌐 Nginx URL: http://location.uptimecrew.lol (if configured)"
 echo "🏥 Health Check: http://localhost:$PORT/health"
-echo "📋 View Logs: docker logs $CONTAINER_NAME"
-echo "🔄 Restart: $DOCKER_COMPOSE_CMD -f docker-compose.prod.yml restart"
-echo "🛑 Stop: $DOCKER_COMPOSE_CMD -f docker-compose.prod.yml down"
+echo ""
+echo "📋 Management Commands:"
+echo "   View Logs: docker logs $CONTAINER_NAME"
+echo "   Restart: $DOCKER_COMPOSE_CMD -f docker-compose.prod.yml restart"
+echo "   Stop: $DOCKER_COMPOSE_CMD -f docker-compose.prod.yml down"
+echo ""
+if command -v nginx &> /dev/null; then
+    echo "🔧 Nginx Commands:"
+    echo "   Test Config: sudo nginx -t"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "   Reload: sudo brew services restart nginx"
+        echo "   Status: sudo brew services list | grep nginx"
+    else
+        echo "   Reload: sudo systemctl reload nginx"
+        echo "   Status: sudo systemctl status nginx"
+    fi
+fi
 echo -e "${NC}"
