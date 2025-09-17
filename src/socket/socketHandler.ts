@@ -16,16 +16,30 @@ class SocketHandler {
   handleConnection(socket: AuthenticatedSocket, io: Server): void {
     try {
       const user = socket.user;
+
       if (!user) {
         logger.error("No user data in socket connection");
         socket.disconnect();
         return;
       }
 
+      // Log authenticated user information
+      logger.info("User authenticated and connected:", {
+        socketId: socket.id,
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        userType: user.user_type,
+        roles: user.roles,
+        connectedAt: new Date().toISOString(),
+      });
+
       // Store connected user
       this.connectedUsers.set(socket.id, {
         id: user.id,
         name: user.name,
+        email: user.email,
+        user_type: user.user_type,
         roles: user.roles,
         connectedAt: new Date(),
       });
@@ -117,7 +131,12 @@ class SocketHandler {
     // Get user's geofences
     socket.on("get_my_geofences", async () => {
       try {
-        const user = socket.user;
+        // For testing without auth, create a mock user
+        const user = socket.user || {
+          id: "test-user-123",
+          name: "Test User",
+          roles: ["technician"],
+        };
         const geofences = await geofencingService.getUserGeofences(user.id);
         socket.emit("my_geofences", geofences);
       } catch (error) {
@@ -136,7 +155,12 @@ class SocketHandler {
         longitude: number;
       }) => {
         try {
-          const user = socket.user;
+          // For testing without auth, create a mock user
+          const user = socket.user || {
+            id: "test-user-123",
+            name: "Test User",
+            roles: ["technician"],
+          };
           const geofence = await geofencingService.createGeofence({
             ...geofenceData,
             created_by: user.id,

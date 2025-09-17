@@ -42,6 +42,8 @@ export interface User {
 export interface ConnectedUser {
   id: string;
   name: string;
+  email: string;
+  user_type: string;
   roles?: string[];
   connectedAt: Date;
 }

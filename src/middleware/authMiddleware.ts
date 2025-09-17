@@ -55,30 +55,39 @@ class AuthMiddleware {
   // Socket authentication middleware
   socketAuth(socket: Socket, next: (err?: Error) => void): void {
     try {
-      const token =
-        socket.handshake.auth.token || socket.handshake.headers.authorization;
+      // Debug logging
+      logger.info("Socket handshake auth data:", {
+        auth: socket.handshake.auth,
+        headers: socket.handshake.headers,
+        socketId: socket.id,
+      });
 
-      if (!token) {
-        return next(new Error("Authentication token required"));
-      }
+      const userData = socket.handshake.auth?.userData;
 
-      // Remove 'Bearer ' prefix if present
-      const cleanToken = token.startsWith("Bearer ")
-        ? token.substring(7)
-        : token;
-
-      const decoded = jwt.verify(cleanToken, this.jwtSecret) as any;
-
-      if (!decoded || !decoded.user_id) {
-        return next(new Error("Invalid or expired token"));
+      if (!userData || !userData.id) {
+        logger.warn("Socket authentication failed: No user data provided", {
+          auth: socket.handshake.auth,
+          userData: userData,
+        });
+        return next(new Error("User data required"));
       }
 
       // Add user info to socket
       (socket as any).user = {
-        id: decoded.user_id,
-        name: decoded.name || "Unknown User",
-        roles: decoded.roles || [],
+        id: userData.id,
+        name: userData.fname + " " + userData.lname,
+        email: userData.email,
+        user_type: userData.user_type,
+        roles: [userData.user_type],
       };
+
+      logger.info("Socket authentication successful:", {
+        userId: userData.id,
+        userName: userData.fname + " " + userData.lname,
+        userEmail: userData.email,
+        userType: userData.user_type,
+        socketId: socket.id,
+      });
 
       next();
     } catch (error) {
