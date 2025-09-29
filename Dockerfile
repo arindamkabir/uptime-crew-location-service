@@ -25,15 +25,14 @@ RUN npm run build
 # Remove dev dependencies after build
 RUN npm prune --production
 
-# Create logs directory (fix typo)
-RUN mkdir -p logs
-
-# Create non-root user
+# Create non-root user first
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nodejs -u 1001
 
-# Change ownership of the app directory
-RUN chown -R nodejs:nodejs /app
+# Create logs directory with proper permissions
+RUN mkdir -p logs && \
+    chmod 755 logs && \
+    chown -R nodejs:nodejs /app
 
 # Switch to non-root user
 USER nodejs
