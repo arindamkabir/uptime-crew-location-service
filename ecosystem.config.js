@@ -10,7 +10,6 @@ module.exports = {
         PORT: 3001,
         HOST: "0.0.0.0",
         LOG_LEVEL: "info",
-        LOG_FILE: "logs/app.log",
         JWT_SECRET: process.env.JWT_SECRET || "your_jwt_secret_here",
         API_KEY_HEADER: "X-API-Key",
         LARAVEL_API_URL:
@@ -27,11 +26,14 @@ module.exports = {
         RATE_LIMIT_WINDOW_MS: "900000",
         RATE_LIMIT_MAX_REQUESTS: "100",
       },
-      log_file: "/app/logs/combined.log",
-      out_file: "/app/logs/out.log",
-      error_file: "/app/logs/error.log",
+
+      // ✅ Redirect PM2 logs to stdout/stderr for Docker
+      log_file: "/dev/stdout",
+      out_file: "/dev/stdout",
+      error_file: "/dev/stderr",
       log_date_format: "YYYY-MM-DD HH:mm:ss Z",
       merge_logs: true,
+
       max_memory_restart: "1G",
       restart_delay: 4000,
       max_restarts: 10,
