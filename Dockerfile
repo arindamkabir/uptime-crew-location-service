@@ -25,19 +25,8 @@ RUN npm run build
 # Remove dev dependencies after build
 RUN npm prune --production
 
-# Create logs directory with proper permissions
-RUN mkdir -p logs && \
-    chmod 777 logs
-
 # Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
-
-# Create log files as root first to ensure they exist
-RUN touch logs/combined.log logs/out.log logs/error.log && \
-    chmod 666 logs/*.log
-
-# Change ownership of the app directory
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
 RUN chown -R nodejs:nodejs /app
 
 # Switch to non-root user
@@ -63,5 +52,5 @@ ENV RATE_LIMIT_MAX_REQUESTS=100
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 
-# Start the application with PM2
+# Start the application with PM2 (logs redirected to stdout/stderr by ecosystem.config.js)
 CMD ["pm2-runtime", "start", "ecosystem.config.js", "--env", "production"]
