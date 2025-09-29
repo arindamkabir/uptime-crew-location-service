@@ -2,6 +2,7 @@
 
 # Uptime Location Service Deployment Script
 # This script builds and deploys the location service using Docker
+# Supports both local development and production deployment
 
 set -e
 
@@ -18,8 +19,19 @@ CONTAINER_NAME="uptime-location-service"
 IMAGE_NAME="uptime-location-service"
 TAG="latest"
 PORT=3001
+DOMAIN="location-api.uptimecrew.lol"
+APP_DIR="/opt/uptime-location-service"
+NGINX_SITE="uptime-location-service"
 
-echo -e "${BLUE}🚀 Deploying Uptime Location Service...${NC}"
+# Check for production mode
+PRODUCTION_MODE=false
+if [ "$1" = "--production" ] || [ "$1" = "-p" ]; then
+    PRODUCTION_MODE=true
+    echo -e "${BLUE}🚀 Deploying Uptime Location Service in PRODUCTION mode...${NC}"
+    echo -e "${YELLOW}⚠️  This will configure SSL, firewall, and production settings${NC}"
+else
+    echo -e "${BLUE}🚀 Deploying Uptime Location Service in DEVELOPMENT mode...${NC}"
+fi
 
 # Function to print colored output
 print_status() {
@@ -32,6 +44,292 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}❌ $1${NC}"
+}
+
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to detect if running in production mode
+is_production() {
+    if [ "$1" = "--production" ] || [ "$1" = "-p" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Function to install system dependencies for production
+install_system_dependencies() {
+    print_status "Installing system dependencies for production..."
+    
+    if command -v apt &> /dev/null; then
+        apt-get update -y
+        apt-get install -y \
+            curl \
+            wget \
+            git \
+            unzip \
+            software-properties-common \
+            apt-transport-https \
+            ca-certificates \
+            gnupg \
+            lsb-release \
+            ufw \
+            fail2ban \
+            htop \
+            vim \
+            nano
+    else
+        print_warning "System dependencies installation skipped (not Ubuntu/Debian)"
+    fi
+}
+
+# Function to install Certbot for SSL
+install_certbot() {
+    print_status "Installing Certbot for SSL certificates..."
+    
+    if command_exists certbot; then
+        print_warning "Certbot is already installed"
+        return
+    fi
+    
+    if command -v apt &> /dev/null; then
+        # Install snapd
+        apt-get install -y snapd
+        systemctl enable --now snapd
+        
+        # Install certbot via snap
+        snap install core; snap refresh core
+        snap install --classic certbot
+        
+        # Create symlink
+        ln -sf /snap/bin/certbot /usr/bin/certbot
+        
+        print_status "Certbot installed successfully"
+    else
+        print_warning "Certbot installation skipped (not Ubuntu/Debian)"
+    fi
+}
+
+# Function to configure firewall for production
+configure_firewall() {
+    print_status "Configuring firewall for production..."
+    
+    if command_exists ufw; then
+        # Reset UFW
+        ufw --force reset
+        
+        # Default policies
+        ufw default deny incoming
+        ufw default allow outgoing
+        
+        # Allow SSH
+        ufw allow ssh
+        
+        # Allow HTTP and HTTPS
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        
+        # Allow the application port (for direct access if needed)
+        ufw allow 3001/tcp
+        
+        # Enable firewall
+        ufw --force enable
+        
+        print_status "Firewall configured successfully"
+    else
+        print_warning "UFW not available, firewall configuration skipped"
+    fi
+}
+
+# Function to setup SSL with Certbot
+setup_ssl() {
+    print_status "Setting up SSL certificate with Certbot..."
+    
+    if ! command_exists certbot; then
+        print_warning "Certbot not available, SSL setup skipped"
+        return
+    fi
+    
+    # Stop Nginx temporarily for certificate generation
+    if command_exists systemctl; then
+        systemctl stop nginx
+    fi
+    
+    # Generate SSL certificate
+    certbot certonly --standalone -d $DOMAIN --non-interactive --agree-tos --email admin@uptimecrew.lol
+    
+    # Create SSL configuration
+    create_ssl_nginx_config
+    
+    # Start Nginx
+    if command_exists systemctl; then
+        systemctl start nginx
+    fi
+    
+    # Setup automatic certificate renewal
+    echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
+    
+    print_status "SSL certificate configured successfully"
+}
+
+# Function to create SSL Nginx configuration
+create_ssl_nginx_config() {
+    print_status "Creating SSL Nginx configuration..."
+    
+    # Determine Nginx configuration directory
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        NGINX_CONF_DIR="/usr/local/etc/nginx"
+        NGINX_SITES_DIR="$NGINX_CONF_DIR/servers"
+    else
+        NGINX_CONF_DIR="/etc/nginx"
+        NGINX_SITES_DIR="$NGINX_CONF_DIR/sites-available"
+    fi
+    
+    # Create SSL configuration
+    cat > "$NGINX_SITES_DIR/$NGINX_SITE-ssl" << 'EOF'
+# Nginx configuration for Uptime Location Service with SSL
+upstream location_service {
+    server 127.0.0.1:3001;
+    keepalive 32;
+}
+
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=socket:10m rate=5r/s;
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name location-api.uptimecrew.lol;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name location-api.uptimecrew.lol;
+    
+    # SSL configuration
+    ssl_certificate /etc/letsencrypt/live/location-api.uptimecrew.lol/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/location-api.uptimecrew.lol/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    
+    # CORS headers for Socket.IO
+    add_header Access-Control-Allow-Origin "https://uptimecrew.lol" always;
+    add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization" always;
+    add_header Access-Control-Allow-Credentials "true" always;
+    
+    # API routes
+    location /api/ {
+        limit_req zone=api burst=20 nodelay;
+        proxy_pass http://location_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+    
+    # Socket.IO routes
+    location /socket.io/ {
+        limit_req zone=socket burst=10 nodelay;
+        proxy_pass http://location_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+    
+    # Health check
+    location /health {
+        proxy_pass http://location_service;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Root location
+    location / {
+        proxy_pass http://location_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # Logging
+    access_log /var/log/nginx/uptime-location-service.access.log;
+    error_log /var/log/nginx/uptime-location-service.error.log;
+}
+EOF
+
+    # Enable SSL site
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS - no symlink needed, just copy
+        print_status "SSL configuration created for macOS"
+    else
+        # Linux - create symlink
+        ln -sf "$NGINX_SITES_DIR/$NGINX_SITE-ssl" /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-enabled/$NGINX_SITE
+        print_status "SSL site enabled"
+    fi
+}
+
+# Function to setup monitoring for production
+setup_monitoring() {
+    print_status "Setting up monitoring for production..."
+    
+    # Create a simple health check script
+    cat > /usr/local/bin/health-check.sh << 'EOF'
+#!/bin/bash
+curl -f http://localhost:3001/health > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "Health check failed, restarting service..."
+    cd /opt/uptime-location-service
+    # Try docker compose first, fallback to docker-compose
+    if docker compose version >/dev/null 2>&1; then
+        docker compose -f docker-compose.prod.yml restart
+    else
+        docker-compose -f docker-compose.prod.yml restart
+    fi
+fi
+EOF
+
+    chmod +x /usr/local/bin/health-check.sh
+    
+    # Add to crontab for every 5 minutes
+    echo "*/5 * * * * /usr/local/bin/health-check.sh" | crontab -
+    
+    print_status "Monitoring setup completed"
 }
 
 # Check if Docker is installed, install if not available
@@ -96,6 +394,31 @@ else
 fi
 
 print_status "Docker and Docker Compose are available"
+
+# Production setup if in production mode
+if [ "$PRODUCTION_MODE" = true ]; then
+    print_status "Setting up production environment..."
+    
+    # Install system dependencies
+    install_system_dependencies
+    
+    # Install Certbot
+    install_certbot
+    
+    # Configure firewall
+    configure_firewall
+    
+    # Create application directory
+    mkdir -p $APP_DIR
+    mkdir -p $APP_DIR/logs
+    
+    # Copy current files to production directory
+    if [ "$(pwd)" != "$APP_DIR" ]; then
+        print_status "Copying files to production directory..."
+        cp -r . $APP_DIR/
+        cd $APP_DIR
+    fi
+fi
 
 # Check if Nginx is installed, install if not available
 if ! command -v nginx &> /dev/null; then
@@ -253,6 +576,12 @@ done
 # Configure Nginx
 print_status "Configuring Nginx..."
 
+# Production SSL setup
+if [ "$PRODUCTION_MODE" = true ]; then
+    setup_ssl
+    setup_monitoring
+fi
+
 # Check if Nginx is installed
 if command -v nginx &> /dev/null; then
     # Copy Nginx configuration
@@ -341,9 +670,22 @@ print_status "Deployment completed successfully!"
 echo -e "${GREEN}"
 echo "🎉 Uptime Location Service is now running!"
 echo ""
-echo "📍 Direct Service URL: http://localhost:$PORT"
-echo "🌐 Nginx URL: http://location.uptimecrew.lol (if configured)"
-echo "🏥 Health Check: http://localhost:$PORT/health"
+
+if [ "$PRODUCTION_MODE" = true ]; then
+    echo "🌐 Production URLs:"
+    echo "   Main Service: https://$DOMAIN"
+    echo "   Health Check: https://$DOMAIN/health"
+    echo "   API Endpoint: https://$DOMAIN/api/"
+    echo "   Socket.IO: https://$DOMAIN/socket.io/"
+    echo ""
+    echo "🔒 SSL Certificate: Configured with Let's Encrypt"
+    echo "🛡️  Firewall: UFW configured"
+    echo "📊 Monitoring: Health checks every 5 minutes"
+else
+    echo "📍 Direct Service URL: http://localhost:$PORT"
+    echo "🌐 Nginx URL: http://location.uptimecrew.lol (if configured)"
+    echo "🏥 Health Check: http://localhost:$PORT/health"
+fi
 echo ""
 echo "📋 Management Commands:"
 echo "   View Logs: docker logs $CONTAINER_NAME"
@@ -361,4 +703,11 @@ if command -v nginx &> /dev/null; then
         echo "   Status: sudo systemctl status nginx"
     fi
 fi
+
+echo ""
+echo "📖 Usage:"
+echo "   Development: ./deploy.sh"
+echo "   Production:  ./deploy.sh --production"
+echo ""
+
 echo -e "${NC}"
