@@ -13,14 +13,17 @@ RUN apk add --no-cache \
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies including PM2
-RUN npm install --omit=dev && npm install -g pm2
+# Install all dependencies (including dev dependencies for build)
+RUN npm install && npm install -g pm2
 
 # Copy source code
 COPY . .
 
 # Build TypeScript
 RUN npm run build
+
+# Remove dev dependencies after build
+RUN npm prune --production
 
 # Create logs directory (fix typo)
 RUN mkdir -p logs
