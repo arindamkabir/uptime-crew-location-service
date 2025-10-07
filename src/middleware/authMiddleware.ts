@@ -1,59 +1,112 @@
 import jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import { Socket } from "socket.io";
+import axios from "axios";
 import logger from "../utils/logger";
 
 class AuthMiddleware {
   private jwtSecret: string;
+  private laravelApiUrl: string;
 
   constructor() {
     this.jwtSecret = process.env.JWT_SECRET || "your_jwt_secret_here";
+    this.laravelApiUrl =
+      process.env.LARAVEL_API_URL || "https://api.uptimecrew.lol";
   }
 
-  // HTTP authentication middleware
-  authenticate(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): void | Response {
+  // Validate session with Laravel backend
+  private async validateLaravelSession(req: Request): Promise<any> {
     try {
-      const token = this.extractToken(req);
-
-      if (!token) {
-        return res.status(401).json({
-          error: "Unauthorized",
-          message: "No authentication token provided",
-        });
+      // Forward the cookies from the original request to Laravel
+      const cookieHeader = req.headers.cookie;
+      if (!cookieHeader) {
+        return null;
       }
 
-      const decoded = jwt.verify(token, this.jwtSecret) as any;
+      const response = await axios.get(
+        `${this.laravelApiUrl}/api/current-user`,
+        {
+          headers: {
+            Cookie: cookieHeader,
+            "X-Requested-With": "XMLHttpRequest",
+            Accept: "application/json",
+          },
+          withCredentials: true,
+          timeout: 5000, // 5 second timeout
+        }
+      );
 
-      if (!decoded || !decoded.user_id) {
-        return res.status(401).json({
-          error: "Unauthorized",
-          message: "Invalid or expired token",
-        });
+      if (response.status === 200 && response.data?.data) {
+        const userData = response.data.data;
+        return {
+          id: userData.id.toString(),
+          name:
+            `${userData.fname || ""} ${userData.lname || ""}`.trim() ||
+            "Unknown User",
+          email: userData.email,
+          roles: [userData.user_type || "customer"],
+        };
       }
 
-      // Add user info to request
-      (req as any).user = {
-        id: decoded.user_id,
-        name: decoded.name || "Unknown User",
-        roles: decoded.roles || [],
-      };
-
-      next();
+      return null;
     } catch (error) {
-      logger.error("Authentication error:", error);
-      return res.status(401).json({
-        error: "Unauthorized",
-        message: "Authentication failed",
-      });
+      logger.error("Laravel session validation failed:", error);
+      return null;
     }
   }
 
+  // HTTP authentication middleware
+  authenticate = (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): void | Response => {
+    // First try JWT token authentication (for backward compatibility)
+    const token = this.extractToken(req);
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, this.jwtSecret) as any;
+        if (decoded && decoded.user_id) {
+          (req as any).user = {
+            id: decoded.user_id,
+            name: decoded.name || "Unknown User",
+            roles: decoded.roles || [],
+          };
+          return next();
+        }
+      } catch (error) {
+        logger.warn(
+          "JWT token validation failed, trying Laravel session:",
+          error
+        );
+      }
+    }
+
+    // If JWT fails or no token, try Laravel session authentication
+    this.validateLaravelSession(req)
+      .then((user) => {
+        if (user) {
+          (req as any).user = user;
+          next();
+        } else {
+          res.status(401).json({
+            error: "Unauthorized",
+            message: "Authentication failed - invalid session",
+          });
+        }
+      })
+      .catch((error) => {
+        logger.error("Authentication error:", error);
+        res.status(401).json({
+          error: "Unauthorized",
+          message: "Authentication failed",
+        });
+      });
+  };
+
   // Socket authentication middleware
-  socketAuth(socket: Socket, next: (err?: Error) => void): void {
+  socketAuth = (socket: Socket, next: (err?: Error) => void): void => {
     try {
       // Debug logging
       logger.info("Socket handshake auth data:", {
@@ -94,7 +147,7 @@ class AuthMiddleware {
       logger.error("Socket authentication error:", error);
       next(new Error("Authentication failed"));
     }
-  }
+  };
 
   // Extract token from request headers
   extractToken(req: Request): string | null {
@@ -113,7 +166,7 @@ class AuthMiddleware {
   }
 
   // Optional authentication (for public endpoints)
-  optionalAuth(req: Request, res: Response, next: NextFunction): void {
+  optionalAuth = (req: Request, res: Response, next: NextFunction): void => {
     try {
       const token = this.extractToken(req);
 
@@ -133,10 +186,10 @@ class AuthMiddleware {
       // Continue without authentication
       next();
     }
-  }
+  };
 
   // Role-based access control
-  requireRole(role: string) {
+  requireRole = (role: string) => {
     return (
       req: Request,
       res: Response,
@@ -158,7 +211,7 @@ class AuthMiddleware {
 
       next();
     };
-  }
+  };
 }
 
 export default new AuthMiddleware();
