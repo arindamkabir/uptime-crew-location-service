@@ -3,6 +3,7 @@ import logger from "../utils/logger";
 import locationService from "../services/locationService";
 import geofencingService from "../services/geofencingService";
 import { ConnectedUser, LocationData } from "../types";
+import axios from "axios";
 
 // Extend Socket to include user property
 interface AuthenticatedSocket extends Socket {
@@ -11,6 +12,13 @@ interface AuthenticatedSocket extends Socket {
 
 class SocketHandler {
   private connectedUsers: Map<string, ConnectedUser> = new Map();
+  private laravelApiUrl: string;
+  private proximityAlerts: Map<string, Set<string>> = new Map(); // Track proximity alerts sent per geofence
+
+  constructor() {
+    this.laravelApiUrl =
+      process.env.LARAVEL_API_URL || "https://api.uptimecrew.lol";
+  }
 
   // Handle new socket connection
   handleConnection(socket: AuthenticatedSocket, io: Server): void {
@@ -109,6 +117,14 @@ class SocketHandler {
         );
         if (geofenceEvents.length > 0) {
           socket.emit("geofence_events", geofenceEvents);
+
+          // Check for proximity alerts (customer and technician in same geofence)
+          await this.checkAndEmitProximityAlerts(
+            socket,
+            io,
+            geofenceEvents,
+            user
+          );
         }
 
         // Confirm location update
@@ -230,6 +246,163 @@ class SocketHandler {
     }
 
     return true;
+  }
+
+  // Check and emit proximity alerts
+  async checkAndEmitProximityAlerts(
+    socket: AuthenticatedSocket,
+    io: Server,
+    geofenceEvents: any[],
+    currentUser: ConnectedUser
+  ): Promise<void> {
+    try {
+      for (const event of geofenceEvents) {
+        if (event.type === "location_update" || event.type === "entry") {
+          const geofenceId = event.geofence_id;
+
+          // Get all users in this geofence
+          const geofence = geofencingService
+            .getActiveGeofences()
+            .find((g) => g.id === geofenceId);
+          if (!geofence || !(geofence as any).serviceRequestId) {
+            continue;
+          }
+
+          const usersInGeofence = await geofencingService.getUsersInGeofence(
+            geofence
+          );
+          const userIds = usersInGeofence.map((u) => u.user_id);
+
+          // Check if we have both customer and technician
+          const hasCustomer = userIds.some((userId) => {
+            const connectedUser = Array.from(this.connectedUsers.values()).find(
+              (u) => u.id === userId
+            );
+            return connectedUser?.user_type === "customer";
+          });
+
+          const hasTechnician = userIds.some((userId) => {
+            const connectedUser = Array.from(this.connectedUsers.values()).find(
+              (u) => u.id === userId
+            );
+            return connectedUser?.user_type === "technician";
+          });
+
+          // If both customer and technician are present, emit proximity alert
+          if (hasCustomer && hasTechnician) {
+            // Check if we've already sent this alert
+            const alertKey = `${geofenceId}-${currentUser.id}`;
+            const sentAlerts =
+              this.proximityAlerts.get(geofenceId) || new Set();
+
+            if (!sentAlerts.has(currentUser.id)) {
+              // Fetch vehicle details from Laravel
+              const vehicleDetails = await this.fetchVehicleDetails(
+                (geofence as any).serviceRequestId
+              );
+
+              // Emit to technician
+              const technicianSocket = this.findUserSocket(
+                io,
+                userIds,
+                "technician"
+              );
+              if (technicianSocket && currentUser.user_type === "technician") {
+                technicianSocket.emit("proximity_alert", {
+                  message: "You are approaching the customer",
+                  geofence_id: geofenceId,
+                  service_request_id: (geofence as any).serviceRequestId,
+                  vehicle_details: vehicleDetails,
+                  timestamp: new Date(),
+                });
+              }
+
+              // Emit to customer
+              const customerSocket = this.findUserSocket(
+                io,
+                userIds,
+                "customer"
+              );
+              if (customerSocket && currentUser.user_type === "customer") {
+                customerSocket.emit("proximity_alert", {
+                  message: "The technician is approaching",
+                  geofence_id: geofenceId,
+                  service_request_id: (geofence as any).serviceRequestId,
+                  vehicle_details: vehicleDetails,
+                  timestamp: new Date(),
+                });
+              }
+
+              // Mark alert as sent
+              sentAlerts.add(currentUser.id);
+              this.proximityAlerts.set(geofenceId, sentAlerts);
+
+              logger.info(`Proximity alert sent for geofence ${geofenceId}`);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.error("Error checking proximity alerts:", error);
+    }
+  }
+
+  // Find socket for a user type in the list
+  findUserSocket(
+    io: Server,
+    userIds: string[],
+    userType: string
+  ): AuthenticatedSocket | null {
+    for (const [socketId, user] of this.connectedUsers.entries()) {
+      if (userIds.includes(user.id) && user.user_type === userType) {
+        const socket = io.sockets.sockets.get(socketId) as AuthenticatedSocket;
+        if (socket) {
+          return socket;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Fetch vehicle details from Laravel backend
+  async fetchVehicleDetails(serviceRequestId: string): Promise<any> {
+    try {
+      const response = await axios.get(
+        `${this.laravelApiUrl}/api/service-requests/${serviceRequestId}`,
+        {
+          headers: {
+            Accept: "application/json",
+          },
+          timeout: 5000,
+        }
+      );
+
+      if (response.status === 200 && response.data?.data) {
+        const serviceRequest = response.data.data;
+        const vehicle = serviceRequest.customer_vehicle;
+
+        if (vehicle) {
+          return {
+            name: vehicle.name || "Unknown Vehicle",
+            plate_number: vehicle.plate_number,
+            vin_number: vehicle.vin_number,
+            vehicle_details: vehicle.vehicle
+              ? {
+                  year: vehicle.vehicle.year,
+                  make: vehicle.vehicle.make?.name,
+                  model: vehicle.vehicle.model?.name,
+                  trim: vehicle.vehicle.trim,
+                }
+              : null,
+          };
+        }
+      }
+
+      return null;
+    } catch (error) {
+      logger.error("Error fetching vehicle details:", error);
+      return null;
+    }
   }
 
   // Get connection info

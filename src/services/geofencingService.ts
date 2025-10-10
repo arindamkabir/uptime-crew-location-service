@@ -218,6 +218,34 @@ class GeofencingService {
     }
   }
 
+  // Check if customer and technician are in same geofence and return proximity alert
+  async checkProximityAlert(
+    geofence: Geofence,
+    usersInGeofence: Array<LocationData & { user_id: string }>
+  ): Promise<any | null> {
+    try {
+      // Check if this is a service request geofence
+      if (!(geofence as any).serviceRequestId) {
+        return null;
+      }
+
+      // Get all users in the geofence with their types
+      const locationService = (await import("./locationService")).default;
+      const userIds = usersInGeofence.map((u) => u.user_id);
+
+      // For now, we'll need to check user types from Laravel backend
+      // This will be implemented in the socket handler where we have user context
+      return {
+        geofence_id: geofence.id,
+        service_request_id: (geofence as any).serviceRequestId,
+        users_in_geofence: userIds,
+      };
+    } catch (error) {
+      logger.error("Error checking proximity alert:", error);
+      return null;
+    }
+  }
+
   // Store geofence events
   async storeGeofenceEvents(events: GeofenceEvent[]): Promise<void> {
     try {
@@ -284,7 +312,7 @@ class GeofencingService {
         description: geofenceData.description || "",
         latitude: geofenceData.latitude,
         longitude: geofenceData.longitude,
-        radius: geofenceData.radius || 50, // Default 50m radius for technician-customer proximity
+        radius: geofenceData.radius || 90, // Default 50m radius for technician-customer proximity
         created_by: geofenceData.created_by,
         is_active: true,
         created_at: new Date().toISOString(),
