@@ -56,11 +56,11 @@ class AuthMiddleware {
   }
 
   // HTTP authentication middleware
-  authenticate = (
+  authenticate = async (
     req: Request,
     res: Response,
     next: NextFunction
-  ): void | Response => {
+  ): Promise<void | Response> => {
     // First try JWT token authentication (for backward compatibility)
     const token = this.extractToken(req);
 
@@ -84,25 +84,24 @@ class AuthMiddleware {
     }
 
     // If JWT fails or no token, try Laravel session authentication
-    this.validateLaravelSession(req)
-      .then((user) => {
-        if (user) {
-          (req as any).user = user;
-          next();
-        } else {
-          res.status(401).json({
-            error: "Unauthorized",
-            message: "Authentication failed - invalid session",
-          });
-        }
-      })
-      .catch((error) => {
-        logger.error("Authentication error:", error);
-        res.status(401).json({
+    try {
+      const user = await this.validateLaravelSession(req);
+      if (user) {
+        (req as any).user = user;
+        return next();
+      } else {
+        return res.status(401).json({
           error: "Unauthorized",
-          message: "Authentication failed",
+          message: "Authentication failed - invalid session",
         });
+      }
+    } catch (error) {
+      logger.error("Authentication error:", error);
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "Authentication failed",
       });
+    }
   };
 
   // Socket authentication middleware
