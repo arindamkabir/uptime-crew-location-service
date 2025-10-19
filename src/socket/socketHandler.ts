@@ -111,6 +111,11 @@ class SocketHandler {
         // Update location in service
         await locationService.updateUserLocation(locationData);
 
+        // If user is a technician, broadcast location to customers watching this service
+        if (user.user_type === "technician") {
+          this.broadcastTechnicianLocation(io, user.id, locationData);
+        }
+
         // Check geofencing
         const geofenceEvents = await geofencingService.checkGeofences(
           locationData
@@ -140,6 +145,36 @@ class SocketHandler {
         });
       }
     });
+
+    // Allow customers to subscribe to technician location updates
+    socket.on(
+      "subscribe_technician_location",
+      (data: { technicianId: string; serviceRequestId: string }) => {
+        const { technicianId, serviceRequestId } = data;
+        const roomName = `technician_${technicianId}_service_${serviceRequestId}`;
+        socket.join(roomName);
+        logger.info(
+          `User ${socket.user.id} subscribed to technician ${technicianId} location updates`
+        );
+        socket.emit("subscription_confirmed", {
+          technicianId,
+          serviceRequestId,
+        });
+      }
+    );
+
+    // Allow customers to unsubscribe from technician location updates
+    socket.on(
+      "unsubscribe_technician_location",
+      (data: { technicianId: string; serviceRequestId: string }) => {
+        const { technicianId, serviceRequestId } = data;
+        const roomName = `technician_${technicianId}_service_${serviceRequestId}`;
+        socket.leave(roomName);
+        logger.info(
+          `User ${socket.user.id} unsubscribed from technician ${technicianId} location updates`
+        );
+      }
+    );
   }
 
   // Handle geofencing events
@@ -246,6 +281,59 @@ class SocketHandler {
     }
 
     return true;
+  }
+
+  // Broadcast technician location to all customers subscribed to their updates
+  broadcastTechnicianLocation(
+    io: Server,
+    technicianId: string,
+    locationData: LocationData
+  ): void {
+    try {
+      // Get all active geofences for this technician to find associated service requests
+      const geofences = geofencingService.getActiveGeofences();
+      const serviceRequestIds = new Set<string>();
+
+      // Find service requests associated with this technician
+      for (const geofence of geofences) {
+        const geofenceAny = geofence as any;
+        if (geofenceAny.serviceRequestId) {
+          serviceRequestIds.add(geofenceAny.serviceRequestId);
+        }
+      }
+
+      // Broadcast to all relevant rooms
+      serviceRequestIds.forEach((serviceRequestId) => {
+        const roomName = `technician_${technicianId}_service_${serviceRequestId}`;
+        io.to(roomName).emit("technician_location_update", {
+          technicianId,
+          serviceRequestId,
+          location: {
+            latitude: locationData.latitude,
+            longitude: locationData.longitude,
+            accuracy: locationData.accuracy,
+            speed: locationData.speed,
+            heading: locationData.heading,
+            timestamp: locationData.timestamp,
+          },
+        });
+      });
+
+      // Also broadcast to a general room for this technician (for backward compatibility)
+      io.emit("technician_location_broadcast", {
+        technicianId,
+        location: {
+          latitude: locationData.latitude,
+          longitude: locationData.longitude,
+          accuracy: locationData.accuracy,
+          speed: locationData.speed,
+          heading: locationData.heading,
+          timestamp: locationData.timestamp,
+        },
+      });
+    } catch (error) {
+      logger.error("Error broadcasting technician location:", error);
+    }
   }
 
   // Check and emit proximity alerts
