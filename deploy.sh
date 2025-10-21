@@ -190,14 +190,16 @@ create_ssl_nginx_config() {
     # Create SSL configuration
     cat > "$NGINX_SITES_DIR/$NGINX_SITE-ssl" << 'EOF'
 # Nginx configuration for Uptime Location Service with SSL
-upstream location_service {
-    server 127.0.0.1:3001;
-    keepalive 32;
-}
+# Domain: location-api.uptimecrew.lol
+# Place this file in /etc/nginx/sites-available/uptime-location-service-ssl
 
-# Rate limiting zones
-limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
-limit_req_zone $binary_remote_addr zone=socket:10m rate=5r/s;
+# IMPORTANT: Add these to your main /etc/nginx/nginx.conf in the http block:
+# limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+# limit_req_zone $binary_remote_addr zone=socket:10m rate=5r/s;
+# upstream location_service {
+#     server 127.0.0.1:3001;
+#     keepalive 32;
+# }
 
 # Redirect HTTP to HTTPS
 server {
@@ -226,14 +228,26 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     
-    # CORS headers for Socket.IO
-    add_header Access-Control-Allow-Origin "https://uptimecrew.lol" always;
-    add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization" always;
+    # CORS headers for API
+    add_header Access-Control-Allow-Origin "https://app.uptimecrew.lol" always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-API-Key" always;
     add_header Access-Control-Allow-Credentials "true" always;
     
     # API routes
     location /api/ {
+        # Handle preflight OPTIONS requests
+        if ($request_method = 'OPTIONS') {
+            add_header Access-Control-Allow-Origin "https://app.uptimecrew.lol";
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS";
+            add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-API-Key";
+            add_header Access-Control-Allow-Credentials "true";
+            add_header Access-Control-Max-Age 1728000;
+            add_header Content-Type "text/plain; charset=utf-8";
+            add_header Content-Length 0;
+            return 204;
+        }
+
         limit_req zone=api burst=20 nodelay;
         proxy_pass http://location_service;
         proxy_http_version 1.1;
@@ -263,9 +277,9 @@ server {
         proxy_connect_timeout 75s;
     }
     
-    # Health check
+    # Health check endpoint (no rate limiting)
     location /health {
-        proxy_pass http://location_service;
+        proxy_pass http://location_service/health;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -584,53 +598,55 @@ fi
 
 # Check if Nginx is installed
 if command -v nginx &> /dev/null; then
-    # Copy Nginx configuration
-    if [ -f "nginx.conf" ]; then
-        # Determine Nginx configuration directory based on OS
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS with Homebrew
-            NGINX_CONF_DIR="/usr/local/etc/nginx"
-            NGINX_SITES_DIR="$NGINX_CONF_DIR/servers"
-            sudo mkdir -p "$NGINX_SITES_DIR"
-            sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service.conf"
-            
-            # Copy locations file if it exists
-            if [ -f "nginx-locations.conf" ]; then
-                sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
-                print_status "Nginx locations configuration copied"
-            fi
-            
-            # Update main nginx.conf to include servers directory
-            if ! grep -q "include servers/\*.conf;" "$NGINX_CONF_DIR/nginx.conf"; then
-                sudo sed -i '' '/http {/a\
+        # Copy Nginx configuration (only if not in production mode with SSL)
+        if [ -f "nginx.conf" ] && [ "$PRODUCTION_MODE" != true ]; then
+            # Determine Nginx configuration directory based on OS
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS with Homebrew
+                NGINX_CONF_DIR="/usr/local/etc/nginx"
+                NGINX_SITES_DIR="$NGINX_CONF_DIR/servers"
+                sudo mkdir -p "$NGINX_SITES_DIR"
+                sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service.conf"
+                
+                # Copy locations file if it exists
+                if [ -f "nginx-locations.conf" ]; then
+                    sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
+                    print_status "Nginx locations configuration copied"
+                fi
+                
+                # Update main nginx.conf to include servers directory
+                if ! grep -q "include servers/\*.conf;" "$NGINX_CONF_DIR/nginx.conf"; then
+                    sudo sed -i '' '/http {/a\
     include servers/*.conf;
 ' "$NGINX_CONF_DIR/nginx.conf"
-                print_status "Updated main nginx.conf to include servers directory"
+                    print_status "Updated main nginx.conf to include servers directory"
+                fi
+            else
+                # Linux (Ubuntu/Debian)
+                NGINX_CONF_DIR="/etc/nginx"
+                NGINX_SITES_DIR="$NGINX_CONF_DIR/sites-available"
+                sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service"
+                
+                # Copy locations file if it exists
+                if [ -f "nginx-locations.conf" ]; then
+                    sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
+                    print_status "Nginx locations configuration copied"
+                fi
+                
+                # Create symlink to enable the site
+                if [ ! -L "/etc/nginx/sites-enabled/uptime-location-service" ]; then
+                    sudo ln -s "$NGINX_SITES_DIR/uptime-location-service" /etc/nginx/sites-enabled/
+                    print_status "Nginx site configuration enabled"
+                fi
+                
+                # Remove default site if it exists
+                if [ -L "/etc/nginx/sites-enabled/default" ]; then
+                    sudo rm /etc/nginx/sites-enabled/default
+                    print_status "Default Nginx site removed"
+                fi
             fi
-        else
-            # Linux (Ubuntu/Debian)
-            NGINX_CONF_DIR="/etc/nginx"
-            NGINX_SITES_DIR="$NGINX_CONF_DIR/sites-available"
-            sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service"
-            
-            # Copy locations file if it exists
-            if [ -f "nginx-locations.conf" ]; then
-                sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
-                print_status "Nginx locations configuration copied"
-            fi
-            
-            # Create symlink to enable the site
-            if [ ! -L "/etc/nginx/sites-enabled/uptime-location-service" ]; then
-                sudo ln -s "$NGINX_SITES_DIR/uptime-location-service" /etc/nginx/sites-enabled/
-                print_status "Nginx site configuration enabled"
-            fi
-            
-            # Remove default site if it exists
-            if [ -L "/etc/nginx/sites-enabled/default" ]; then
-                sudo rm /etc/nginx/sites-enabled/default
-                print_status "Default Nginx site removed"
-            fi
-        fi
+        elif [ "$PRODUCTION_MODE" = true ]; then
+            print_status "Production mode: SSL configuration will be handled by setup_ssl function"
         
         # Test Nginx configuration
         if sudo nginx -t; then
