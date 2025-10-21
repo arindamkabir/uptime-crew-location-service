@@ -73,17 +73,22 @@ app.get("/health", (req, res) => {
 import locationRoutes from "./routes/locationRoutes";
 import geofenceRoutes from "./routes/geofenceRoutes";
 
-// Development mode: bypass auth if DEV_MODE=true
-const shouldAuth = process.env.DEV_MODE !== "true";
+// Development mode: bypass auth if DEV_MODE=true or NODE_ENV=development
+const shouldAuth =
+  process.env.DEV_MODE !== "true" && process.env.NODE_ENV !== "development";
 
 app.use(
   "/api/locations",
-  shouldAuth ? authMiddleware.authenticate : (req, res, next) => next(),
+  shouldAuth
+    ? authMiddleware.authenticate.bind(authMiddleware)
+    : (req, res, next) => next(),
   locationRoutes
 );
 app.use(
   "/api/geofences",
-  shouldAuth ? authMiddleware.authenticate : (req, res, next) => next(),
+  shouldAuth
+    ? authMiddleware.authenticate.bind(authMiddleware)
+    : (req, res, next) => next(),
   geofenceRoutes
 );
 
