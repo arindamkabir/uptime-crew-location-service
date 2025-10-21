@@ -78,14 +78,14 @@ const shouldAuth =
   process.env.DEV_MODE !== "true" && process.env.NODE_ENV !== "development";
 
 app.use(
-  "/api/locations",
+  "/api/location/locations",
   shouldAuth
     ? authMiddleware.authenticate.bind(authMiddleware)
     : (req, res, next) => next(),
   locationRoutes
 );
 app.use(
-  "/api/geofences",
+  "/api/location/geofences",
   shouldAuth
     ? authMiddleware.authenticate.bind(authMiddleware)
     : (req, res, next) => next(),
