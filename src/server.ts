@@ -33,22 +33,26 @@ const io = new socketIo.Server(server, {
 // Middleware
 app.use(helmet());
 app.use(compression());
-app.use(
-  cors({
-    origin:
-      process.env.CORS_ORIGIN ||
-      process.env.SOCKET_CORS_ORIGIN ||
-      "http://localhost:3000",
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "X-API-Key",
-    ],
-  })
-);
+
+// Only use CORS in development - Nginx handles it in production
+if (process.env.NODE_ENV !== "production") {
+  app.use(
+    cors({
+      origin:
+        process.env.CORS_ORIGIN ||
+        process.env.SOCKET_CORS_ORIGIN ||
+        "http://localhost:3000",
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-API-Key",
+      ],
+    })
+  );
+}
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
