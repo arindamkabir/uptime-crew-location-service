@@ -61,6 +61,12 @@ class AuthMiddleware {
     res: Response,
     next: NextFunction
   ): Promise<void | Response> => {
+    // Log authentication attempt
+    logger.info(`Auth attempt for ${req.method} ${req.path}`, {
+      hasCookie: !!req.headers.cookie,
+      hasAuth: !!this.extractToken(req),
+    });
+
     // First try JWT token authentication (for backward compatibility)
     const token = this.extractToken(req);
 
@@ -73,6 +79,7 @@ class AuthMiddleware {
             name: decoded.name || "Unknown User",
             roles: decoded.roles || [],
           };
+          logger.info("JWT authentication successful");
           return next();
         }
       } catch (error) {
@@ -88,11 +95,14 @@ class AuthMiddleware {
       const user = await this.validateLaravelSession(req);
       if (user) {
         (req as any).user = user;
+        logger.info("Laravel session authentication successful");
         return next();
       } else {
+        logger.warn("Authentication failed - no valid session or token");
         return res.status(401).json({
           error: "Unauthorized",
-          message: "Authentication failed - invalid session",
+          message:
+            "Authentication failed - invalid session or token. Please ensure you're logged in.",
         });
       }
     } catch (error) {

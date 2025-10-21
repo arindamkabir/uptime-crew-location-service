@@ -34,25 +34,25 @@ const io = new socketIo.Server(server, {
 app.use(helmet());
 app.use(compression());
 
-// Only use CORS in development - Nginx handles it in production
-if (process.env.NODE_ENV !== "production") {
-  app.use(
-    cors({
-      origin:
-        process.env.CORS_ORIGIN ||
-        process.env.SOCKET_CORS_ORIGIN ||
-        "http://localhost:3000",
-      credentials: true,
-      methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-      allowedHeaders: [
-        "Content-Type",
-        "Authorization",
-        "X-Requested-With",
-        "X-API-Key",
-      ],
-    })
-  );
-}
+// CORS configuration
+app.use(
+  cors({
+    origin:
+      process.env.CORS_ORIGIN ||
+      process.env.SOCKET_CORS_ORIGIN ||
+      "http://localhost:3000",
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "X-API-Key",
+      "Cookie",
+    ],
+    exposedHeaders: ["Set-Cookie"],
+  })
+);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -73,8 +73,19 @@ app.get("/health", (req, res) => {
 import locationRoutes from "./routes/locationRoutes";
 import geofenceRoutes from "./routes/geofenceRoutes";
 
-app.use("/api/locations", authMiddleware.authenticate, locationRoutes);
-app.use("/api/geofences", authMiddleware.authenticate, geofenceRoutes);
+// Development mode: bypass auth if DEV_MODE=true
+const shouldAuth = process.env.DEV_MODE !== "true";
+
+app.use(
+  "/api/locations",
+  shouldAuth ? authMiddleware.authenticate : (req, res, next) => next(),
+  locationRoutes
+);
+app.use(
+  "/api/geofences",
+  shouldAuth ? authMiddleware.authenticate : (req, res, next) => next(),
+  geofenceRoutes
+);
 
 // Socket connection handling
 io.use(authMiddleware.socketAuth);
