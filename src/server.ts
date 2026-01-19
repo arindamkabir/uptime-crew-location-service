@@ -35,24 +35,29 @@ app.use(helmet());
 app.use(compression());
 
 // CORS configuration
-app.use(
-  cors({
-    origin:
-      process.env.CORS_ORIGIN ||
-      process.env.SOCKET_CORS_ORIGIN ||
-      "http://localhost:3000",
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "X-API-Key",
-      "Cookie",
-    ],
-    exposedHeaders: ["Set-Cookie"],
-  })
-);
+// In production Nginx handles CORS headers. Enable Express CORS only in non-production.
+if (process.env.NODE_ENV !== "production") {
+  app.use(
+    cors({
+      origin:
+        process.env.CORS_ORIGIN ||
+        process.env.SOCKET_CORS_ORIGIN ||
+        "http://localhost:3000",
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-API-Key",
+        "Cookie",
+      ],
+      exposedHeaders: ["Set-Cookie"],
+    })
+  );
+} else {
+  logger.info("Production environment detected - skipping Express CORS; Nginx will handle CORS headers.");
+}
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
