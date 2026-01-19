@@ -1,20 +1,22 @@
-# Use Node.js 18 Alpine as base image
-FROM node:18-alpine
+# Use Node.js 18 slim (Debian) as base image for better compatibility with pm2/pidusage
+FROM node:18-slim
 
 # Set working directory
 WORKDIR /app
 
 # Install system dependencies
-RUN apk add --no-cache \
-    wget \
-    curl \
-    && rm -rf /var/cache/apk/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        wget \
+        curl \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package*.json ./
 
 # Install all dependencies (including dev dependencies for build)
-RUN npm install && npm install -g pm2
+RUN npm install && npm install -g pm2@latest
 
 # Copy source code
 COPY . .

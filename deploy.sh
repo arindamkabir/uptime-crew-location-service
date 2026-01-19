@@ -600,51 +600,51 @@ fi
 if command -v nginx &> /dev/null; then
         # Copy Nginx configuration (only if not in production mode with SSL)
         if [ -f "nginx.conf" ] && [ "$PRODUCTION_MODE" != true ]; then
-            # Determine Nginx configuration directory based on OS
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                # macOS with Homebrew
-                NGINX_CONF_DIR="/usr/local/etc/nginx"
-                NGINX_SITES_DIR="$NGINX_CONF_DIR/servers"
-                sudo mkdir -p "$NGINX_SITES_DIR"
-                sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service.conf"
-                
-                # Copy locations file if it exists
-                if [ -f "nginx-locations.conf" ]; then
-                    sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
-                    print_status "Nginx locations configuration copied"
-                fi
-                
-                # Update main nginx.conf to include servers directory
-                if ! grep -q "include servers/\*.conf;" "$NGINX_CONF_DIR/nginx.conf"; then
-                    sudo sed -i '' '/http {/a\
+        # Determine Nginx configuration directory based on OS
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS with Homebrew
+            NGINX_CONF_DIR="/usr/local/etc/nginx"
+            NGINX_SITES_DIR="$NGINX_CONF_DIR/servers"
+            sudo mkdir -p "$NGINX_SITES_DIR"
+            sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service.conf"
+            
+            # Copy locations file if it exists
+            if [ -f "nginx-locations.conf" ]; then
+                sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
+                print_status "Nginx locations configuration copied"
+            fi
+            
+            # Update main nginx.conf to include servers directory
+            if ! grep -q "include servers/\*.conf;" "$NGINX_CONF_DIR/nginx.conf"; then
+                sudo sed -i '' '/http {/a\
     include servers/*.conf;
 ' "$NGINX_CONF_DIR/nginx.conf"
-                    print_status "Updated main nginx.conf to include servers directory"
-                fi
-            else
-                # Linux (Ubuntu/Debian)
-                NGINX_CONF_DIR="/etc/nginx"
-                NGINX_SITES_DIR="$NGINX_CONF_DIR/sites-available"
-                sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service"
-                
-                # Copy locations file if it exists
-                if [ -f "nginx-locations.conf" ]; then
-                    sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
-                    print_status "Nginx locations configuration copied"
-                fi
-                
-                # Create symlink to enable the site
-                if [ ! -L "/etc/nginx/sites-enabled/uptime-location-service" ]; then
-                    sudo ln -s "$NGINX_SITES_DIR/uptime-location-service" /etc/nginx/sites-enabled/
-                    print_status "Nginx site configuration enabled"
-                fi
-                
-                # Remove default site if it exists
-                if [ -L "/etc/nginx/sites-enabled/default" ]; then
-                    sudo rm /etc/nginx/sites-enabled/default
-                    print_status "Default Nginx site removed"
-                fi
+                print_status "Updated main nginx.conf to include servers directory"
             fi
+        else
+            # Linux (Ubuntu/Debian)
+            NGINX_CONF_DIR="/etc/nginx"
+            NGINX_SITES_DIR="$NGINX_CONF_DIR/sites-available"
+            sudo cp nginx.conf "$NGINX_SITES_DIR/uptime-location-service"
+            
+            # Copy locations file if it exists
+            if [ -f "nginx-locations.conf" ]; then
+                sudo cp nginx-locations.conf "$NGINX_SITES_DIR/uptime-location-service-locations.conf"
+                print_status "Nginx locations configuration copied"
+            fi
+            
+            # Create symlink to enable the site
+            if [ ! -L "/etc/nginx/sites-enabled/uptime-location-service" ]; then
+                sudo ln -s "$NGINX_SITES_DIR/uptime-location-service" /etc/nginx/sites-enabled/
+                print_status "Nginx site configuration enabled"
+            fi
+            
+            # Remove default site if it exists
+            if [ -L "/etc/nginx/sites-enabled/default" ]; then
+                sudo rm /etc/nginx/sites-enabled/default
+                print_status "Default Nginx site removed"
+            fi
+        fi
         elif [ "$PRODUCTION_MODE" = true ]; then
             print_status "Production mode: SSL configuration will be handled by setup_ssl function"
         
