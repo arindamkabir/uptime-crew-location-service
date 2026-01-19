@@ -27,10 +27,10 @@ module.exports = {
         RATE_LIMIT_MAX_REQUESTS: "100",
       },
 
-      // ✅ Redirect PM2 logs to stdout/stderr for Docker
-      log_file: "/dev/stdout",
-      out_file: "/dev/stdout",
-      error_file: "/dev/stderr",
+      // PM2 logs: write to files (so `pm2 logs` works inside container)
+      log_file: "/var/log/pm2/combined.log",
+      out_file: "/var/log/pm2/out.log",
+      error_file: "/var/log/pm2/error.log",
       log_date_format: "YYYY-MM-DD HH:mm:ss Z",
       merge_logs: true,
 

@@ -1,5 +1,5 @@
-# Use Node.js 18 slim (Debian) as base image for better compatibility with pm2/pidusage
-FROM node:18-slim
+# Use Node.js 20 slim (Debian) for latest features and compatibility
+FROM node:20-slim
 
 # Set working directory
 WORKDIR /app
@@ -32,6 +32,8 @@ RUN npm prune --production
 RUN groupadd -g 1001 nodejs || true && \
     useradd -u 1001 -g nodejs -M -s /usr/sbin/nologin nodejs || true
 RUN chown -R nodejs:nodejs /app
+# Create pm2 log directory and set ownership
+RUN mkdir -p /var/log/pm2 && chown -R nodejs:nodejs /var/log/pm2
 
 # Switch to non-root user
 USER nodejs
