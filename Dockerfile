@@ -27,8 +27,10 @@ RUN npm run build
 # Remove dev dependencies after build
 RUN npm prune --production
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
+# Create non-root user (Debian-compatible)
+# Use groupadd/useradd on Debian-based images to avoid Alpine-specific flags
+RUN groupadd -g 1001 nodejs || true && \
+    useradd -u 1001 -g nodejs -M -s /usr/sbin/nologin nodejs || true
 RUN chown -R nodejs:nodejs /app
 
 # Switch to non-root user
